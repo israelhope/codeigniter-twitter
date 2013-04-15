@@ -1,6 +1,4 @@
-<?php
-if (!defined('BASEPATH'))
-	exit('No direct script access allowed');
+<?php if (!defined('BASEPATH')) exit('No direct script access allowed');
 
 /**
  * CodeIgniter Twitter
@@ -11,7 +9,7 @@ if (!defined('BASEPATH'))
  * @package        	CodeIgniter
  * @category    	Libraries
  * @author        	Marcos Sanz
- * @link 			https://github.com/marsanla/codeigniter-twitter
+ * @link 			https://github.com/israelhope/codeigniter-twitter
  * @license         http://www.opensource.org/licenses/mit-license.html
  */
 
@@ -150,11 +148,11 @@ class tweetConnection {
 			'Connection: Keep-Alive', 
 			'Cache-Control: no-cache'
 		);
-		
+
 		if (isset($_SERVER['HTTP_USER_AGENT'])) {
 			array_push($_h, 'User-Agent: ' . $_SERVER['HTTP_USER_AGENT']);
 		}
-		
+
 		$urlParts = parse_url($url);
 		$oauth = 'Authorization: OAuth realm="' . $urlParts['path'] . '",';
 
@@ -216,6 +214,7 @@ class tweetConnection {
 					}
 
 					if ($response -> __resp -> code !== 200) {
+						log_message('error','ERROR TWITTER API:'.print_r($response,true));
 						throw new tweetException($response -> __resp -> code . ' | Request Failed: ' . $response -> __resp -> data -> errors[0] -> message);
 					}
 
@@ -311,12 +310,13 @@ class tweetOauth extends tweetConnection {
 	private $_requestTokenUrl = 'http://api.twitter.com/oauth/request_token';
 	private $_accessTokenUrl = 'http://api.twitter.com/oauth/access_token';
 	private $_signatureMethod = 'HMAC-SHA1';
-	private $_version = '1.0';
+	private $_version = '1.0a';
 	private $_apiVersion = '1.1';
 	private $_apiUrl = 'http://api.twitter.com';
 	private $_searchUrl = 'http://search.twitter.com';
 	private $_responseType = 'json';
 	private $_callback = NULL;
+	private $_verifier = NULL;
 	private $_errors = array();
 	private $_enable_debug = FALSE;
 
@@ -384,11 +384,14 @@ class tweetOauth extends tweetConnection {
 			$loggedIn = TRUE;
 		}
 
-		$this -> _obj -> unit -> run($loggedIn, TRUE, 'Logged In');
+		//$this -> _obj -> unit -> run($loggedIn, TRUE, 'Logged In');
 		return $loggedIn;
 	}
 
 	private function _checkLogin() {
+		if(isset($_GET['oauth_verifier'])){
+			$this -> _setVerifier($_GET['oauth_verifier']);
+		}
 		if (isset($_GET['oauth_token'])) {
 			$this -> _setAccessKey($_GET['oauth_token']);
 			$token = $this -> _getAccessToken();
@@ -542,17 +545,28 @@ class tweetOauth extends tweetConnection {
 		$this -> _callback = $url;
 	}
 
+	private function _getVerifier(){
+		return $this -> _verifier;
+	}
+
+	private function _setVerifier($verifier){
+		$this -> _verifier = $verifier;
+	}
+
 	private function _prepareParameters($method = NULL, $url = NULL, $params = NULL) {
 		if (empty($method) || empty($url))
 			return FALSE;
 
 		$callback = $this -> _getCallback();
-
 		if (!empty($callback)) {
 			$oauth['oauth_callback'] = $callback;
 		}
-
 		$this -> setCallback(NULL);
+
+		$verifier = $this -> _getVerifier();
+		if (!empty($verifier)) {
+			$oauth['oauth_verifier'] = $verifier;
+		}
 
 		$oauth['oauth_consumer_key'] = $this -> _getConsumerKey();
 		$oauth['oauth_token'] = $this -> _getAccessKey();

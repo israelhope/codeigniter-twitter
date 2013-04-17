@@ -81,19 +81,24 @@ class tweetConnection {
 	// Allow multi-threading.
 
 	private $_mch = NULL;
+	private $_allowMulticall = false;
 	private $_properties = array();
 
 	public $header = NULL;
 
-	function __construct() {
+	function __construct($allow_multicall = false) {
 		$this -> _mch = curl_multi_init();
-
+		$this -> _allowMulticall = $allow_multicall;
 		$this -> _properties = array(
 			'code' => CURLINFO_HTTP_CODE, 
 			'time' => CURLINFO_TOTAL_TIME, 
 			'length' => CURLINFO_CONTENT_LENGTH_DOWNLOAD, 
 			'type' => CURLINFO_CONTENT_TYPE
 		);
+	}
+
+	function __destruct(){
+		curl_multi_close($this -> _mch);
 	}
 
 	private function _initConnection($url) {
@@ -178,7 +183,7 @@ class tweetConnection {
 
 		$response = curl_multi_add_handle($this -> _mch, $ch);
 
-		if ($response === CURLM_OK || $response === CURLM_CALL_MULTI_PERFORM) {
+		if ( !$this -> _allowMulticall && ($response === CURLM_OK || $response === CURLM_CALL_MULTI_PERFORM) ) {
 			do {
 				$mch = curl_multi_exec($this -> _mch, $active);
 			} while ( $mch === CURLM_CALL_MULTI_PERFORM );
@@ -187,6 +192,36 @@ class tweetConnection {
 		} else {
 			return $response;
 		}
+	}
+
+	public function getMultiResponses(){
+		if(empty($this -> _requests)){
+			return FALSE;
+		}
+		
+		//Ejecuto los handles
+		$active = null; 
+		do{
+			$mrc = curl_multi_exec($this -> _mch, $active);
+		} while ($mrc == CURLM_CALL_MULTI_PERFORM);
+
+		while ($active && $mrc == CURLM_OK) {
+			if(curl_multi_select($this -> _mch) != -1){
+				do{
+					$mrc = curl_multi_exec($this -> _mch, $active);
+				} while ($mrc == CURLM_CALL_MULTI_PERFORM);
+			}
+		}
+
+		$this -> _setResponse();
+
+		$responseArray = array();
+		foreach ($this-> _responses as $key => $value){
+			$responseOauth = new tweetResponseOauth((object)$this -> _responses[$key]);
+			$responseArray[] = (isset($responseOauth -> __resp))?($responseOauth -> __resp): FALSE;
+		}
+		
+		return $responseArray;
 	}
 
 	private function _getResponse($key = NULL) {
@@ -203,7 +238,7 @@ class tweetConnection {
 			$response = curl_multi_exec($this -> _mch, $running_curl);
 
 			if ($running !== NULL && $running_curl != $running) {
-				$this -> _setResponse($key);
+				$this -> _setResponse();
 
 				if (isset($this -> _responses[$key])) {
 					$response = new tweetResponseOauth((object)$this -> _responses[$key]);
@@ -228,7 +263,7 @@ class tweetConnection {
 
 	}
 
-	private function _setResponse($key) {
+	private function _setResponse() {
 		while ($done = curl_multi_info_read($this -> _mch)) {
 			$key = (string)$done['handle'];
 
@@ -241,9 +276,8 @@ class tweetConnection {
 
 			foreach ($this->_properties as $curl_key => $value) {
 				$this -> _responses[$key][$curl_key] = curl_getinfo($done['handle'], $value);
-
-				curl_multi_remove_handle($this -> _mch, $done['handle']);
 			}
+			curl_multi_remove_handle($this -> _mch, $done['handle']);
 		}
 	}
 
@@ -319,6 +353,7 @@ class tweetOauth extends tweetConnection {
 	private $_verifier = NULL;
 	private $_errors = array();
 	private $_enable_debug = FALSE;
+	private $_allowMulticall = false;
 
 	function __construct() {
 		parent::__construct();
@@ -349,6 +384,19 @@ class tweetOauth extends tweetConnection {
 			}
 		}
 	}
+	
+	public function init_multicall(){
+		$this->_allowMulticall = TRUE;
+		$this -> _connection = new tweetConnection($this->_allowMulticall);
+	}
+
+	public function exec_multicall(){
+		$this -> _allowMulticall = FALSE;	
+		if (!isset($this -> _connection)){
+			return FALSE;
+		}
+		return $this -> _connection -> getMultiResponses();
+	}
 
 	public function enable_debug($debug) {
 		$debug = (bool)$debug;
@@ -364,7 +412,9 @@ class tweetOauth extends tweetConnection {
 
 		// var_dump($response);
 		// die();
-
+		if(is_numeric($response)){
+			return $response;
+		}
 		return ($response === NULL) ? FALSE : $response -> _result;
 	}
 
@@ -504,11 +554,13 @@ class tweetOauth extends tweetConnection {
 
 	protected function _httpRequest($method = null, $url = null, $params = null) {
 		if (empty($method) || empty($url))
-			return FALSE;
+			return NULL;
 		if (empty($params['oauth_signature']))
 			$params = $this -> _prepareParameters($method, $url, $params);
 
-		$this -> _connection = new tweetConnection();
+		if (!$this->_allowMulticall) {
+			$this -> _connection = new tweetConnection();	
+		}
 
 		try {
 			switch ( $method ) {
